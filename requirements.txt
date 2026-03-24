@@ -7,3 +7,5 @@ python-dotenv>=1.0.0
 lxml>=4.9.0
 pyarrow>=12.0.0
 requests>=2.31.0
+ib_async>=1.0.0
+vectorbt>=0.26.0

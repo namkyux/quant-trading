@@ -149,21 +149,21 @@ def display_positions(positions):
         print(f"  {C.DIM}No open positions{C.RESET}")
         return
 
-    # Fixed column widths (visible characters only)
-    W_SYM = 10
-    W_QTY = 14
-    W_VAL = 13
-    W_AVG = 13
+    # Dynamic symbol width — options symbols can be 18+ chars
+    W_SYM = max(10, max(len(p.symbol) for p in positions) + 2)
+    W_QTY = 10
+    W_VAL = 12
+    W_AVG = 12
     W_PNL = 12
     W_PCT = 8
-    W_TOTAL = W_SYM + W_QTY + W_VAL + W_AVG + W_PNL + W_PCT + 10
+    W_TOTAL = W_SYM + W_QTY + W_VAL + W_AVG + W_PNL + W_PCT + 6
 
-    print(f"  {C.BOLD}{'Symbol':<{W_SYM}}{'Qty':>{W_QTY}}{'Value':>{W_VAL}}{'Avg Price':>{W_AVG}}{'P&L':>{W_PNL}}{'P&L %':>{W_PCT}}{C.RESET}")
+    print(f"  {C.BOLD}{'Symbol':<{W_SYM}}{'Qty':>{W_QTY}}{'Value':>{W_VAL}}{'Avg':>{W_AVG}}{'P&L':>{W_PNL}}{'P&L %':>{W_PCT}}{C.RESET}")
     print(f"  {C.GRAY}{'─' * W_TOTAL}{C.RESET}")
 
     total_pl = 0
     for p in sorted(positions, key=lambda x: -x.market_value):
-        # Format qty: all formats padded to exactly W_QTY visible chars
+        # Format qty
         if abs(p.qty) >= 1_000_000:
             qty_raw = f"{p.qty / 1_000_000:.2f}M"
         elif abs(p.qty) >= 1_000:
@@ -174,11 +174,11 @@ def display_positions(positions):
             qty_raw = f"{p.qty:.6f}"
         qty_str = f"{qty_raw:>{W_QTY}}"
 
-        val_str = f"${p.market_value:>11,.2f}"
-        avg_str = f"${p.avg_entry_price:>11,.2f}"
+        val_str = f"${p.market_value:>{W_VAL - 1},.2f}"
+        avg_str = f"${p.avg_entry_price:>{W_AVG - 1},.2f}"
 
         # Format P&L with sign, pad to fixed width, then colorize
-        pl_raw = f"{p.unrealized_pl:>+11,.2f}"
+        pl_raw = f"{p.unrealized_pl:>+{W_PNL - 1},.2f}"
         pct_raw = f"{p.unrealized_pl_pct:>+6.1%}"
 
         if p.unrealized_pl >= 0:
@@ -193,9 +193,9 @@ def display_positions(positions):
         total_pl += p.unrealized_pl
 
     print(f"  {C.GRAY}{'─' * W_TOTAL}{C.RESET}")
-    total_raw = f"{total_pl:>+11,.2f}"
+    total_raw = f"{total_pl:>+{W_PNL - 1},.2f}"
     total_color = C.GREEN if total_pl >= 0 else C.RED
-    pad = W_SYM + W_QTY + W_VAL + W_AVG + 3  # +3 for the spaces between columns
+    pad = W_SYM + W_QTY + W_VAL + W_AVG + 3
     print(f"  {'Total P&L':<{W_SYM}}{'':{pad - W_SYM}}{total_color}{total_raw}{C.RESET}")
 
 
@@ -221,13 +221,13 @@ def display_trade(side, symbol, amount, score=None, reason=""):
     """Pretty trade execution line."""
     if side == "buy":
         icon = f"{C.GREEN}{C.BOLD}BUY {C.RESET}"
-        color = C.GREEN
     else:
         icon = f"{C.RED}{C.BOLD}SELL{C.RESET}"
-        color = C.RED
-    score_str = f" score={score_color(score)}" if score else ""
-    reason_str = f" {C.DIM}{reason}{C.RESET}" if reason else ""
-    print(f"  {icon} {color}{C.BOLD}{symbol:<6}{C.RESET} ${abs(amount):>10,.2f}{score_str}{reason_str}")
+    # 20 chars fits all OCC option symbols (e.g. VLO260410C00260000)
+    w = 20 if len(symbol) > 8 else 8
+    score_str = f"  {score_color(score)}" if score else ""
+    reason_str = f"  {C.DIM}{reason}{C.RESET}" if reason else ""
+    print(f"  {icon} {C.WHITE}{C.BOLD}{symbol:<{w}}{C.RESET} ${abs(amount):>10,.2f}{score_str}{reason_str}")
 
 
 def display_signal(symbol, score, mom_5d, mom_21d, vol_ratio, is_breakout, is_hot):

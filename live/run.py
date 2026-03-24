@@ -5,12 +5,13 @@ Usage:
   python live/run.py                                  # Run all on paper (default)
   python live/run.py --type stocks                    # Stocks only
   python live/run.py --type crypto                    # Crypto only (24/7)
-  python live/run.py --type all                       # Stocks + crypto
-  python live/run.py --account paper                  # Paper account (default)
+  python live/run.py --type options                   # Options only
+  python live/run.py --type futures                   # Futures only (IB required)
+  python live/run.py --type all                       # Everything
+  python live/run.py --broker ib                      # Use Interactive Brokers
+  python live/run.py --broker alpaca                  # Use Alpaca (default)
   python live/run.py --display account                # Show account & positions
   python live/run.py --scan all                       # Scan stocks + crypto
-  python live/run.py --scan stocks                    # Scan stocks only
-  python live/run.py --scan crypto                    # Scan crypto only
   python live/run.py --type stocks --simulate         # Simulate stocks (no orders)
 """
 
@@ -39,8 +40,12 @@ examples:
     )
 
     parser.add_argument(
-        "--type", choices=["stocks", "crypto", "options", "all"], default="all",
-        help="What to trade: stocks, crypto, options, or all (default: all)",
+        "--type", choices=["stocks", "crypto", "options", "futures", "all"], default="all",
+        help="What to trade: stocks, crypto, options, futures, or all (default: all)",
+    )
+    parser.add_argument(
+        "--broker", choices=["alpaca", "ib"], default=None,
+        help="Override broker: alpaca or ib (default: from BROKER env var)",
     )
     parser.add_argument(
         "--account", choices=["paper"], default="paper",
@@ -60,6 +65,11 @@ examples:
     )
 
     args = parser.parse_args()
+
+    # Override broker if specified via CLI
+    if args.broker:
+        import config
+        config.BROKER = args.broker
 
     # --- Display ---
     if args.display == "account":
@@ -86,16 +96,18 @@ examples:
         _run_crypto(simulate)
     elif args.type == "options":
         _run_options(simulate)
+    elif args.type == "futures":
+        _run_futures(simulate)
 
 
 def _show_account():
     import time
-    from live.broker import AlpacaBroker
+    from live.broker_factory import get_broker
     from utils.display import (
         display_live_account, display_positions, C, subheader, divider, timestamp,
     )
 
-    broker = AlpacaBroker()
+    broker = get_broker()
 
     # Get initial equity to track daily P&L
     initial = broker.get_account()
@@ -221,35 +233,43 @@ def _run_all(simulate: bool):
     from live.day_trader import DayTrader
     from live.crypto_trader import CryptoTrader
     from live.options_trader import OptionsTrader
-    from live.broker import AlpacaBroker
+    from live.futures_trader import FuturesTrader
+    from live.broker_factory import get_broker
+    from config import BROKER
     from utils.display import C
     import time
 
     label = f"{C.YELLOW}SIMULATE{C.RESET}" if simulate else f"{C.GREEN}PAPER{C.RESET}"
-    print(f"\n  {C.BOLD}{C.CYAN}Starting STOCKS + CRYPTO + OPTIONS{C.RESET} [{label}]\n")
+    broker_label = f"{C.MAGENTA}{C.BOLD}{BROKER.upper()}{C.RESET}"
+    print(f"\n  {C.BOLD}{C.CYAN}Starting ALL TRADERS{C.RESET} [{label}] broker={broker_label}\n")
 
-    crypto = CryptoTrader(dry_run=simulate)
-    options = OptionsTrader(dry_run=simulate)
-    stocks = DayTrader(dry_run=simulate)
-    broker = AlpacaBroker()
+    broker = get_broker()
 
     # Crypto always runs in background (24/7)
+    crypto = CryptoTrader(dry_run=simulate)
     crypto_thread = threading.Thread(target=crypto.start, name="crypto", daemon=True)
     crypto_thread.start()
 
     # Options runs in background during market hours
+    options = OptionsTrader(dry_run=simulate)
     options_thread = threading.Thread(target=options.start, name="options", daemon=True)
     options_thread.start()
 
-    # If market is open, run stocks in main thread
-    # If market is closed, just keep crypto running and wait
+    # Futures runs in background (nearly 24h on IB)
+    if BROKER == "ib":
+        futures = FuturesTrader(dry_run=simulate)
+        futures_thread = threading.Thread(target=futures.start, name="futures", daemon=True)
+        futures_thread.start()
+
+    # Stocks in main thread
+    stocks = DayTrader(dry_run=simulate)
     while True:
         try:
             if broker.is_market_open():
                 print(f"\n  {C.GREEN}Market is open — starting stock trader{C.RESET}\n")
                 stocks.start()
             else:
-                print(f"\n  {C.DIM}Stock market closed — crypto running 24/7. "
+                print(f"\n  {C.DIM}Stock market closed — other traders running. "
                       f"Checking again in 5 min...{C.RESET}")
                 time.sleep(300)
         except KeyboardInterrupt:
@@ -287,6 +307,17 @@ def _run_options(simulate: bool):
     print(f"\n  {C.BOLD}{C.CYAN}Starting OPTIONS{C.RESET} [{label}]\n")
 
     trader = OptionsTrader(dry_run=simulate)
+    trader.start()
+
+
+def _run_futures(simulate: bool):
+    from live.futures_trader import FuturesTrader
+    from utils.display import C
+
+    label = f"{C.YELLOW}SIMULATE{C.RESET}" if simulate else f"{C.GREEN}PAPER{C.RESET}"
+    print(f"\n  {C.BOLD}{C.CYAN}Starting FUTURES{C.RESET} [{label}]\n")
+
+    trader = FuturesTrader(dry_run=simulate)
     trader.start()
 
 
