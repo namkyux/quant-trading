@@ -31,6 +31,7 @@ from config import (
     FUTURES_MAX_POSITIONS, FUTURES_DAILY_LOSS_LIMIT,
 )
 from live.futures_broker import FuturesBroker, FuturesPosition, FUTURES_SPECS
+from live.broker_factory import _next_client_id
 from live.risk_manager import RiskManager
 from utils.trade_log import log_trade
 from utils.display import (
@@ -81,7 +82,7 @@ class FuturesTrader:
 
     def __init__(self, dry_run: bool = False):
         self.dry_run = dry_run
-        self.futures = FuturesBroker()
+        self.futures = FuturesBroker(client_id=_next_client_id())
         self.risk_mgr = RiskManager(
             max_drawdown_pct=MAX_DRAWDOWN_PCT,
             max_position_pct=0.50,  # futures are margin-based, different sizing

@@ -13,6 +13,7 @@ import logging
 from datetime import datetime, timedelta
 from dataclasses import dataclass
 
+import asyncio
 from ib_async import IB, Option, Stock, MarketOrder, LimitOrder
 
 from config import IB_HOST, IB_PAPER_PORT, IB_LIVE_PORT, IB_CLIENT_ID, BROKER_MODE
@@ -55,9 +56,15 @@ class IBOptionsBroker:
             self.ib = ib
             self._owns_connection = False
         else:
+            # Ensure an event loop exists in this thread
+            try:
+                asyncio.get_event_loop()
+            except RuntimeError:
+                asyncio.set_event_loop(asyncio.new_event_loop())
+
             self.ib = IB()
             port = port or (IB_PAPER_PORT if BROKER_MODE == "paper" else IB_LIVE_PORT)
-            self.ib.connect(host, port, clientId=client_id + 1)  # +1 to avoid client ID clash
+            self.ib.connect(host, port, clientId=client_id)
             self._owns_connection = True
         # Request delayed data if live market data isn't subscribed
         self.ib.reqMarketDataType(3)  # 3 = delayed, 1 = live
@@ -118,11 +125,32 @@ class IBOptionsBroker:
         if not valid_exps:
             return []
 
+        # Get current price to filter strikes near the money
+        try:
+            stock_contract = Stock(symbol, "SMART", "USD")
+            self.ib.qualifyContracts(stock_contract)
+            tickers = self.ib.reqTickers(stock_contract)
+            current_price = tickers[0].marketPrice() if tickers else 0
+            if not current_price or current_price != current_price:  # NaN
+                current_price = tickers[0].close if tickers else 0
+        except Exception:
+            current_price = 0
+
+        # Filter strikes to ±20% of current price (avoids deep OTM junk)
+        if current_price > 0:
+            low = current_price * 0.80
+            high = current_price * 1.20
+            relevant_strikes = [s for s in params["strikes"] if low <= s <= high]
+        else:
+            relevant_strikes = params["strikes"]
+
         contracts = []
         for exp in valid_exps[:3]:  # limit to 3 expirations to avoid flooding
-            for strike in params["strikes"]:
+            for strike in relevant_strikes:
+                # OCC format: AAPL260408C00260000 (YYMMDD, not YYYYMMDD)
+                exp_short = exp[2:]  # 20260408 -> 260408
                 contracts.append(OptionContract(
-                    symbol=f"{symbol}{exp}{right}{int(strike * 1000):08d}",
+                    symbol=f"{symbol}{exp_short}{right}{int(strike * 1000):08d}",
                     underlying=symbol,
                     type=option_type,
                     strike=strike,

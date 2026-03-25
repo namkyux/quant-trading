@@ -39,13 +39,21 @@ CRYPTO_SYMBOLS = [
     # --- Mid cap / DeFi ---
     "UNI/USD", "AAVE/USD", "CRV/USD", "GRT/USD", "LDO/USD",
     "SUSHI/USD", "FIL/USD", "RENDER/USD", "ONDO/USD",
+    "COMP/USD", "MKR/USD", "SNX/USD", "ENS/USD", "LRC/USD",
+    "DYDX/USD", "YFI/USD",
     # --- Meme / high volatility ---
     "DOGE/USD", "SHIB/USD", "PEPE/USD", "BONK/USD", "WIF/USD",
-    "TRUMP/USD",
+    "TRUMP/USD", "APE/USD",
     # --- Layer 1 / infra ---
-    "ARB/USD", "POL/USD", "XTZ/USD", "BAT/USD",
+    "ARB/USD", "POL/USD", "MATIC/USD", "ALGO/USD", "ATOM/USD",
+    "NEAR/USD", "FTM/USD", "ICP/USD", "HBAR/USD", "XLM/USD",
+    "EOS/USD", "XTZ/USD", "VET/USD", "THETA/USD", "IOTA/USD",
+    "TRX/USD", "NEO/USD", "OP/USD", "IMX/USD", "ETC/USD",
+    # --- Metaverse / gaming ---
+    "MANA/USD", "SAND/USD", "AXS/USD",
     # --- Other ---
-    "YFI/USD", "SKY/USD", "PAXG/USD", "HYPE/USD",
+    "BAT/USD", "SKY/USD", "PAXG/USD", "HYPE/USD",
+    "DASH/USD", "ZEC/USD",
 ]
 CRYPTO_STOP_LOSS_PCT = 0.08      # wider: 8% (crypto is more volatile)
 CRYPTO_TAKE_PROFIT_PCT = 0.15    # wider: 15%

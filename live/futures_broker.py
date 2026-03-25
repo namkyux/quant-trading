@@ -24,6 +24,7 @@ import logging
 from datetime import datetime
 from dataclasses import dataclass
 
+import asyncio
 from ib_async import IB, Future, MarketOrder, LimitOrder, StopOrder
 
 from config import (
@@ -97,9 +98,15 @@ class FuturesBroker:
             self.ib = ib
             self._owns_connection = False
         else:
+            # Ensure an event loop exists in this thread
+            try:
+                asyncio.get_event_loop()
+            except RuntimeError:
+                asyncio.set_event_loop(asyncio.new_event_loop())
+
             self.ib = IB()
             port = port or (IB_PAPER_PORT if BROKER_MODE == "paper" else IB_LIVE_PORT)
-            self.ib.connect(host, port, clientId=client_id + 2)  # +2 to avoid clashes
+            self.ib.connect(host, port, clientId=client_id)
             self._owns_connection = True
 
         self.account = account or self.ib.managedAccounts()[0]

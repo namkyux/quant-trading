@@ -17,6 +17,7 @@ import logging
 import time
 from dataclasses import dataclass
 
+import asyncio
 from ib_async import IB, Stock, Crypto, MarketOrder, util
 
 from config import IB_HOST, IB_PAPER_PORT, IB_LIVE_PORT, IB_CLIENT_ID, IB_ACCOUNT, BROKER_MODE
@@ -63,6 +64,12 @@ class IBBroker:
 
     def _connect(self):
         """Connect to TWS / IB Gateway."""
+        # Ensure an event loop exists in this thread (needed when running in background threads)
+        try:
+            asyncio.get_event_loop()
+        except RuntimeError:
+            asyncio.set_event_loop(asyncio.new_event_loop())
+
         logger.info(f"Connecting to IB at {self.host}:{self.port} (clientId={self.client_id})")
         self.ib.connect(self.host, self.port, clientId=self.client_id)
         acct = self.account or self.ib.managedAccounts()[0]

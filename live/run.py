@@ -97,7 +97,7 @@ def _show_account():
         display_live_account, display_positions, C, subheader, divider, timestamp,
     )
 
-    broker = get_broker()
+    broker = get_broker(client_id=99)  # high ID so it doesn't clash with traders
 
     # Get initial equity to track daily P&L
     initial = broker.get_account()
