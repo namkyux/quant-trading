@@ -86,17 +86,25 @@ class CryptoTrader:
 
     def __init__(self, dry_run: bool = False):
         self.dry_run = dry_run
-        self.broker = get_broker()
+        self.broker = None  # created in start()
         self.risk_mgr = RiskManager(
             max_drawdown_pct=MAX_DRAWDOWN_PCT,
             max_position_pct=CRYPTO_MAX_POSITION_PCT,
         )
         self.start_equity = 0.0
         self.scan_count = 0
-        self.social_buzz = {}  # symbol -> mention count
+        self.social_buzz = {}
 
     def start(self):
         """Main loop — runs 24/7."""
+        import asyncio
+        try:
+            asyncio.get_event_loop()
+        except RuntimeError:
+            asyncio.set_event_loop(asyncio.new_event_loop())
+
+        self.broker = get_broker()
+
         display_banner()
 
         print(f"  {C.MAGENTA}{C.BOLD}CRYPTO MODE — 24/7{C.RESET}")

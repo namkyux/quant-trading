@@ -82,7 +82,8 @@ class FuturesTrader:
 
     def __init__(self, dry_run: bool = False):
         self.dry_run = dry_run
-        self.futures = FuturesBroker(client_id=_next_client_id())
+        self.futures = None  # created in start() to bind to the right thread
+        self._client_id = _next_client_id()
         self.risk_mgr = RiskManager(
             max_drawdown_pct=MAX_DRAWDOWN_PCT,
             max_position_pct=0.50,  # futures are margin-based, different sizing
@@ -92,6 +93,15 @@ class FuturesTrader:
 
     def start(self):
         """Main loop."""
+        # Create event loop and broker in this thread (ib_async binds to creating thread)
+        import asyncio
+        try:
+            asyncio.get_event_loop()
+        except RuntimeError:
+            asyncio.set_event_loop(asyncio.new_event_loop())
+
+        self.futures = FuturesBroker(client_id=self._client_id)
+
         display_banner()
 
         print(f"  {C.MAGENTA}{C.BOLD}FUTURES MODE{C.RESET}")

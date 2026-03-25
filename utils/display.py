@@ -143,11 +143,58 @@ def display_account(equity, cash, buying_power, positions, daily_pnl=None, peak=
     print(divider())
 
 
+def _load_trade_reasons() -> dict[str, str]:
+    """Load the most recent buy reason for each symbol from the trade log."""
+    import os
+    import csv
+    log_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "live", "logs", "trades.csv")
+    reasons = {}
+    try:
+        with open(log_path, "r") as f:
+            for row in csv.DictReader(f):
+                if row.get("side") == "buy" and row.get("symbol"):
+                    reasons[row["symbol"]] = row.get("reason", "")
+    except (FileNotFoundError, KeyError):
+        pass
+    return reasons
+
+
+def _strategy_tag(reason: str) -> str:
+    """Color-code a strategy reason into a short tag."""
+    r = reason.lower()
+    if "momentum" in r and "hot" in r:
+        return f"{C.RED}{C.BOLD}momentum+HOT{C.RESET}"
+    elif "momentum" in r:
+        return f"{C.GREEN}momentum{C.RESET}"
+    elif "covered_call" in r:
+        return f"{C.CYAN}covered call{C.RESET}"
+    elif "protective_put" in r:
+        return f"{C.YELLOW}protective put{C.RESET}"
+    elif "earnings_straddle" in r:
+        return f"{C.MAGENTA}earnings straddle{C.RESET}"
+    elif "trend_long" in r:
+        return f"{C.GREEN}trend long{C.RESET}"
+    elif "trend_short" in r:
+        return f"{C.RED}trend short{C.RESET}"
+    elif "mean_revert" in r:
+        return f"{C.YELLOW}mean revert{C.RESET}"
+    elif "stop_loss" in r:
+        return f"{C.RED}stop loss{C.RESET}"
+    elif "take_profit" in r:
+        return f"{C.GREEN}take profit{C.RESET}"
+    elif reason:
+        return f"{C.DIM}{reason}{C.RESET}"
+    return ""
+
+
 def display_positions(positions):
-    """Pretty position table."""
+    """Pretty position table with strategy info from trade log."""
     if not positions:
         print(f"  {C.DIM}No open positions{C.RESET}")
         return
+
+    # Load strategy reasons from trade log
+    reasons = _load_trade_reasons()
 
     # Dynamic symbol width — options symbols can be 18+ chars
     W_SYM = max(10, max(len(p.symbol) for p in positions) + 2)
@@ -158,8 +205,8 @@ def display_positions(positions):
     W_PCT = 8
     W_TOTAL = W_SYM + W_QTY + W_VAL + W_AVG + W_PNL + W_PCT + 6
 
-    print(f"  {C.BOLD}{'Symbol':<{W_SYM}}{'Qty':>{W_QTY}}{'Value':>{W_VAL}}{'Avg':>{W_AVG}}{'P&L':>{W_PNL}}{'P&L %':>{W_PCT}}{C.RESET}")
-    print(f"  {C.GRAY}{'─' * W_TOTAL}{C.RESET}")
+    print(f"  {C.BOLD}{'Symbol':<{W_SYM}}{'Qty':>{W_QTY}}{'Value':>{W_VAL}}{'Avg':>{W_AVG}}{'P&L':>{W_PNL}}{'P&L %':>{W_PCT}}  Strategy{C.RESET}")
+    print(f"  {C.GRAY}{'─' * (W_TOTAL + 20)}{C.RESET}")
 
     total_pl = 0
     for p in sorted(positions, key=lambda x: -x.market_value):
@@ -188,11 +235,15 @@ def display_positions(positions):
             pl_str = f"{C.RED}{pl_raw}{C.RESET}"
             pct_str = f"{C.RED}{pct_raw}{C.RESET}"
 
+        # Strategy tag from trade log
+        reason = reasons.get(p.symbol, "")
+        tag = _strategy_tag(reason)
+
         bar = heat_bar(abs(p.unrealized_pl_pct) * 10, max_score=5.0, width=8)
-        print(f"  {C.BOLD}{C.WHITE}{p.symbol:<{W_SYM}}{C.RESET}{qty_str} {val_str} {avg_str} {pl_str} {pct_str}  {bar}")
+        print(f"  {C.BOLD}{C.WHITE}{p.symbol:<{W_SYM}}{C.RESET}{qty_str} {val_str} {avg_str} {pl_str} {pct_str}  {bar} {tag}")
         total_pl += p.unrealized_pl
 
-    print(f"  {C.GRAY}{'─' * W_TOTAL}{C.RESET}")
+    print(f"  {C.GRAY}{'─' * (W_TOTAL + 20)}{C.RESET}")
     total_raw = f"{total_pl:>+{W_PNL - 1},.2f}"
     total_color = C.GREEN if total_pl >= 0 else C.RED
     pad = W_SYM + W_QTY + W_VAL + W_AVG + 3
