@@ -23,6 +23,7 @@ from datetime import datetime
 from dataclasses import dataclass
 
 import numpy as np
+import pandas as pd
 import yfinance as yf
 
 from config import (
@@ -62,7 +63,7 @@ YF_PROXY = {
 }
 
 POSITION_CHECK_MINUTES = 3
-MIN_SCORE = 0.3
+MIN_SCORE = 0.15  # lowered: hourly signals are naturally weaker
 
 
 @dataclass
@@ -73,8 +74,10 @@ class FuturesSignal:
     momentum_short: float    # 5-bar momentum
     momentum_long: float     # 21-bar momentum
     volume_ratio: float
-    trend_aligned: bool      # short-term aligned with long-term trend
+    trend_aligned: bool
     reason: str
+    rsi: float = 50.0
+    atr_stop_pct: float = 0.02  # ATR-based dynamic stop
 
 
 class FuturesTrader:
@@ -90,6 +93,7 @@ class FuturesTrader:
         )
         self.start_equity = 0.0
         self.scan_count = 0
+        self._position_stops: dict[str, float] = {}  # symbol -> ATR-based stop pct
 
     def start(self):
         """Main loop."""
@@ -227,6 +231,8 @@ class FuturesTrader:
 
                 close = data["Close"].squeeze()
                 volume = data["Volume"].squeeze()
+                high = data["High"].squeeze() if "High" in data.columns else close
+                low = data["Low"].squeeze() if "Low" in data.columns else close
 
                 # Momentum
                 mom_5 = close.iloc[-1] / close.iloc[-5] - 1
@@ -237,53 +243,82 @@ class FuturesTrader:
                 vol_avg = volume.iloc[:-3].mean()
                 vol_ratio = vol_recent / vol_avg if vol_avg > 0 else 1.0
 
+                # RSI (14-period on hourly bars)
+                delta = close.diff()
+                gain = delta.clip(lower=0).rolling(14).mean()
+                loss_s = (-delta.clip(upper=0)).rolling(14).mean()
+                rs = float(gain.iloc[-1]) / float(loss_s.iloc[-1]) if float(loss_s.iloc[-1]) > 0 else 100
+                rsi = 100 - (100 / (1 + rs))
+
+                # ATR (14-period) for dynamic stop sizing
+                tr = pd.concat([
+                    high - low,
+                    (high - close.shift(1)).abs(),
+                    (low - close.shift(1)).abs(),
+                ], axis=1).max(axis=1)
+                atr_14 = float(tr.rolling(14).mean().iloc[-1])
+                price = float(close.iloc[-1])
+                atr_pct = atr_14 / price if price > 0 else 0.02
+
                 # Trend alignment: short and long momentum same direction
                 trend_aligned = (mom_5 > 0 and mom_21 > 0) or (mom_5 < 0 and mom_21 < 0)
 
                 # Simple moving averages
                 sma_8 = close.iloc[-8:].mean()
                 sma_21 = close.iloc[-21:].mean()
-                price = close.iloc[-1]
 
                 # --- Strategy 1: Trend Following ---
-                # Strong momentum + aligned trend + above/below MAs
                 if abs(mom_5) > 0.005 and trend_aligned:
                     direction = "long" if mom_5 > 0 else "short"
 
-                    # Confirm with MA alignment
-                    if direction == "long" and price > sma_8 > sma_21:
+                    # RSI filter: don't go long overbought, don't short oversold
+                    if direction == "long" and rsi > 70:
+                        pass  # skip
+                    elif direction == "short" and rsi < 30:
+                        pass  # skip
+                    elif direction == "long" and price > sma_8 > sma_21:
                         score = abs(mom_5) * 10 + abs(mom_21) * 5
                         if vol_ratio > 1.5:
                             score += vol_ratio * 0.3
+                        stop = max(atr_pct * 1.5, 0.005)  # 1.5x ATR, floor 0.5%
                         signals.append(FuturesSignal(
                             symbol=symbol, score=score, direction=direction,
                             momentum_short=mom_5, momentum_long=mom_21,
                             volume_ratio=vol_ratio, trend_aligned=True,
-                            reason=f"trend_long 5h={mom_5:+.2%} 21h={mom_21:+.2%} vol={vol_ratio:.1f}x",
+                            reason=f"trend_long 5h={mom_5:+.2%} 21h={mom_21:+.2%} RSI={rsi:.0f}",
+                            rsi=rsi, atr_stop_pct=stop,
                         ))
                     elif direction == "short" and price < sma_8 < sma_21:
                         score = abs(mom_5) * 10 + abs(mom_21) * 5
                         if vol_ratio > 1.5:
                             score += vol_ratio * 0.3
+                        stop = max(atr_pct * 1.5, 0.005)
                         signals.append(FuturesSignal(
                             symbol=symbol, score=score, direction=direction,
                             momentum_short=mom_5, momentum_long=mom_21,
                             volume_ratio=vol_ratio, trend_aligned=True,
-                            reason=f"trend_short 5h={mom_5:+.2%} 21h={mom_21:+.2%} vol={vol_ratio:.1f}x",
+                            reason=f"trend_short 5h={mom_5:+.2%} 21h={mom_21:+.2%} RSI={rsi:.0f}",
+                            rsi=rsi, atr_stop_pct=stop,
                         ))
 
                 # --- Strategy 2: Mean Reversion ---
                 # Extreme short-term move against the longer trend = fade it
                 if abs(mom_5) > 0.02 and not trend_aligned:
-                    # Short-term moved hard but long-term trend says otherwise
                     direction = "long" if mom_5 < 0 and mom_21 > 0 else "short" if mom_5 > 0 and mom_21 < 0 else None
                     if direction:
-                        score = abs(mom_5) * 5  # smaller score — mean reversion is riskier
+                        score = abs(mom_5) * 5
+                        # RSI confirms mean reversion
+                        if direction == "long" and rsi < 30:
+                            score += 0.1  # oversold bounce
+                        elif direction == "short" and rsi > 70:
+                            score += 0.1  # overbought fade
+                        stop = max(atr_pct * 2.0, 0.008)  # wider stop for mean reversion
                         signals.append(FuturesSignal(
                             symbol=symbol, score=score, direction=direction,
                             momentum_short=mom_5, momentum_long=mom_21,
                             volume_ratio=vol_ratio, trend_aligned=False,
-                            reason=f"mean_revert 5h={mom_5:+.2%} 21h={mom_21:+.2%}",
+                            reason=f"mean_revert 5h={mom_5:+.2%} 21h={mom_21:+.2%} RSI={rsi:.0f}",
+                            rsi=rsi, atr_stop_pct=stop,
                         ))
 
             except Exception as e:
@@ -340,14 +375,18 @@ class FuturesTrader:
                 print(f"  {dir_color}{C.BOLD}{signal.direction.upper():<5}{C.RESET} "
                       f"{C.BOLD}{signal.symbol}{C.RESET} x{qty}  "
                       f"{score_color(signal.score)}  "
+                      f"stop={signal.atr_stop_pct:.1%}  "
                       f"{C.DIM}DRY RUN {signal.reason}{C.RESET}")
+                self._position_stops[signal.symbol] = signal.atr_stop_pct
             else:
                 try:
                     self.futures.submit_order(signal.symbol, qty, side)
+                    self._position_stops[signal.symbol] = signal.atr_stop_pct
                     dir_color = C.GREEN if signal.direction == "long" else C.RED
                     print(f"  {dir_color}{C.BOLD}{signal.direction.upper():<5}{C.RESET} "
                           f"{C.BOLD}{signal.symbol}{C.RESET} x{qty}  "
                           f"{score_color(signal.score)}  "
+                          f"stop={signal.atr_stop_pct:.1%}  "
                           f"{C.DIM}{signal.reason}{C.RESET}")
                     log_trade(signal.symbol, side, 0, asset_type="futures",
                               score=signal.score, reason=signal.reason)
@@ -357,13 +396,16 @@ class FuturesTrader:
                     logger.error(f"Failed: {signal.symbol} — {e}")
 
     def _manage_positions(self, positions: list[FuturesPosition]):
-        """Check futures positions for stop loss / take profit."""
+        """Check futures positions for stop loss / take profit (ATR-based)."""
         for pos in positions:
             pnl_pct = pos.unrealized_pl_pct
             direction = "LONG" if pos.qty > 0 else "SHORT"
             dir_color = C.GREEN if pos.qty > 0 else C.RED
 
-            if pnl_pct < -FUTURES_STOP_LOSS_PCT:
+            # Use ATR-based stop if available, otherwise fall back to config
+            stop_pct = self._position_stops.get(pos.symbol, FUTURES_STOP_LOSS_PCT)
+
+            if pnl_pct < -stop_pct:
                 print(f"  {C.RED}✗ STOP{C.RESET}  {dir_color}{direction:<5}{C.RESET} "
                       f"{C.BOLD}{pos.symbol:<5}{C.RESET} "
                       f"{pct_color(pnl_pct, '+.1%')} ({pnl_color(pos.unrealized_pl)})")

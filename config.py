@@ -67,7 +67,7 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 LIVE_INITIAL_CAPITAL = 10_000
 LIVE_TARGET = 2_000_000
 MAX_DRAWDOWN_PCT = 0.20
-MAX_POSITION_PCT = 0.35
+MAX_POSITION_PCT = 0.20   # 5 positions × 20% = 100% max (no margin)
 REBALANCE_TIME = "09:45"
 REBALANCE_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
 

@@ -66,6 +66,7 @@ TAKE_PROFIT_PCT = 1.00         # 100% gain = take profit (double your money)
 MIN_DAYS_TO_EXPIRY = 14        # don't buy options expiring in < 2 weeks
 MAX_DAYS_TO_EXPIRY = 45        # don't buy options expiring in > 45 days
 MIN_STRADDLE_VOL_RATIO = 2.0   # min volume ratio to trigger earnings straddle
+STOP_COOLDOWN_HOURS = 4        # don't re-enter same underlying after stop loss
 
 
 @dataclass
@@ -97,6 +98,7 @@ class OptionsTrader:
         self.hot_tickers: dict[str, float] = {}
         self.universe: list[str] = []
         self._minutes_since_hot = HOT_SCAN_MINUTES
+        self._stop_cooldowns: dict[str, datetime] = {}  # underlying -> earliest re-entry time
 
     def start(self):
         """Main loop — runs during market hours."""
@@ -216,6 +218,29 @@ class OptionsTrader:
     def _scan_and_enter(self, account, open_slots: int):
         """Scan for option trading opportunities."""
         signals = self._generate_signals(account)
+
+        if not signals:
+            display_no_signals()
+            return
+
+        # Purge expired cooldowns
+        now = datetime.now()
+        self._stop_cooldowns = {s: t for s, t in self._stop_cooldowns.items() if t > now}
+
+        # Filter out underlyings in cooldown (recently stopped out)
+        before = len(signals)
+        signals = [s for s in signals if now >= self._stop_cooldowns.get(s.underlying, datetime.min)]
+
+        # Filter out underlyings we already hold options on
+        held_underlyings = set()
+        for p in account.positions:
+            if len(p.symbol) > 10:
+                held_underlyings.add(self._extract_underlying(p.symbol))
+        signals = [s for s in signals if s.underlying not in held_underlyings]
+
+        if before != len(signals):
+            filtered = before - len(signals)
+            print(f"  {C.DIM}Filtered {filtered} signals (cooldown/dedup){C.RESET}")
 
         if not signals:
             display_no_signals()
@@ -561,6 +586,14 @@ class OptionsTrader:
 
         return signals
 
+    @staticmethod
+    def _extract_underlying(option_symbol: str) -> str:
+        """Extract underlying ticker from OCC option symbol (e.g., 'AAPL260315C00170000' -> 'AAPL')."""
+        for i, ch in enumerate(option_symbol):
+            if ch.isdigit():
+                return option_symbol[:i]
+        return option_symbol[:4]
+
     def _manage_positions(self, account):
         """Check option positions for stop loss / take profit."""
         option_positions = [p for p in account.positions if len(p.symbol) > 10]
@@ -574,6 +607,11 @@ class OptionsTrader:
 
             if pnl_pct < -STOP_LOSS_PCT:
                 display_position_action(pos.symbol, pnl_pct, pos.unrealized_pl, "stop_loss")
+                # Cooldown: block this underlying from re-entry
+                underlying = self._extract_underlying(pos.symbol)
+                cooldown_until = datetime.now() + timedelta(hours=STOP_COOLDOWN_HOURS)
+                self._stop_cooldowns[underlying] = cooldown_until
+                print(f"    {C.YELLOW}Cooldown: {underlying} blocked until {cooldown_until:%H:%M}{C.RESET}")
                 if not self.dry_run:
                     try:
                         self.broker.close_position(pos.symbol)

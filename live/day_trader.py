@@ -85,6 +85,7 @@ class TradeSignal:
     volume_ratio: float
     near_high: bool
     action: str  # "buy", "sell", "hold"
+    rsi: float = 0.0
 
 
 class DayTrader:
@@ -260,8 +261,25 @@ class DayTrader:
         self.universe = screen(universe_df, criteria, verbose=False)
         logger.info(f"Universe: {len(self.universe)} stocks")
 
+    def _spy_above_sma(self, period: int = 50) -> bool:
+        """Return True if SPY is above its N-day SMA (bullish regime)."""
+        try:
+            spy = yf.download("SPY", period=f"{period + 10}d", progress=False)
+            if len(spy) < period:
+                return True
+            close = spy["Close"].squeeze()
+            return float(close.iloc[-1]) > float(close.iloc[-period:].mean())
+        except Exception:
+            return True  # fail open
+
     def _scan_and_enter(self, account, open_slots: int):
         """Scan for entry opportunities and open new positions."""
+        # Regime filter: only buy momentum when SPY is in uptrend
+        if not self._spy_above_sma(50):
+            print(f"  {C.YELLOW}SPY below 50-day SMA — bearish regime, skipping buys{C.RESET}")
+            logger.info("Regime filter: SPY below 50-SMA, skipping entries")
+            return
+
         print(f"  {C.DIM}Scanning {len(self.universe)} stocks...{C.RESET}")
         signals = self._generate_signals()
 
@@ -407,6 +425,19 @@ class DayTrader:
                 if vol_ratio > 2.0:
                     score += 0.1           # extra volume bonus
 
+                # RSI (14-period)
+                delta = prices.diff()
+                gain = delta.clip(lower=0).rolling(14).mean()
+                loss = (-delta.clip(upper=0)).rolling(14).mean()
+                rs = float(gain.iloc[-1]) / float(loss.iloc[-1]) if float(loss.iloc[-1]) > 0 else 100
+                rsi = 100 - (100 / (1 + rs))
+
+                # RSI filter: penalize overbought, boost oversold-bouncing
+                if rsi > 75:
+                    score -= 0.4
+                elif rsi < 40 and mom_5d > 0:
+                    score += 0.2  # oversold bounce
+
                 # Volatility penalty
                 daily_ret = prices.pct_change().dropna()
                 ann_vol = daily_ret.std() * np.sqrt(252)
@@ -418,12 +449,12 @@ class DayTrader:
                 # Hot stock boost from scanner
                 if symbol in self.hot_tickers:
                     heat = self.hot_tickers[symbol]
-                    score += heat * 0.3  # 30% of heat score as bonus
-                    near_high = True  # flag it
+                    score += heat * 0.3
+                    near_high = True
 
-                # Determine action — aggressive: only need score + short-term momentum
+                # Determine action: need score + short-term momentum + not overbought
                 is_hot = symbol in self.hot_tickers
-                if score >= MIN_SCORE and (mom_5d > 0 or is_hot):
+                if score >= MIN_SCORE and (mom_5d > 0 or is_hot) and rsi < 75:
                     action = "buy"
                 else:
                     action = "hold"
@@ -436,6 +467,7 @@ class DayTrader:
                     volume_ratio=vol_ratio,
                     near_high=near_high,
                     action=action,
+                    rsi=rsi,
                 ))
 
             except Exception:
