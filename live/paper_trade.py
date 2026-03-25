@@ -16,12 +16,9 @@ Usage:
   python live/paper_trade.py --schedule
 
 Setup:
-  1. Create a free Alpaca account at https://alpaca.markets
-  2. Get your API keys from the dashboard
-  3. Add to .env:
-     ALPACA_API_KEY=your_key_here
-     ALPACA_SECRET_KEY=your_secret_here
-     ALPACA_BASE_URL=https://paper-api.alpaca.markets
+  1. Download and launch IB Gateway
+  2. Log in with paper trading account
+  3. Configure API settings (port 4002, enable socket clients)
 """
 
 import sys
@@ -74,10 +71,10 @@ def main():
     args = parser.parse_args()
 
     from live.trader import AutoTrader
-    from live.broker import AlpacaBroker
+    from live.broker_factory import get_broker
 
     if args.status:
-        broker = AlpacaBroker()
+        broker = get_broker()
         account = broker.get_account()
         print(f"\n{'='*50}")
         print(f"  PAPER TRADING ACCOUNT STATUS")

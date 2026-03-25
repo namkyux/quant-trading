@@ -8,8 +8,7 @@ Usage:
   python live/run.py --type options                   # Options only
   python live/run.py --type futures                   # Futures only (IB required)
   python live/run.py --type all                       # Everything
-  python live/run.py --broker ib                      # Use Interactive Brokers
-  python live/run.py --broker alpaca                  # Use Alpaca (default)
+  python live/run.py                                  # Uses Interactive Brokers
   python live/run.py --display account                # Show account & positions
   python live/run.py --scan all                       # Scan stocks + crypto
   python live/run.py --type stocks --simulate         # Simulate stocks (no orders)
@@ -44,10 +43,6 @@ examples:
         help="What to trade: stocks, crypto, options, futures, or all (default: all)",
     )
     parser.add_argument(
-        "--broker", choices=["alpaca", "ib"], default=None,
-        help="Override broker: alpaca or ib (default: from BROKER env var)",
-    )
-    parser.add_argument(
         "--account", choices=["paper"], default="paper",
         help="Which account to use (default: paper)",
     )
@@ -65,11 +60,6 @@ examples:
     )
 
     args = parser.parse_args()
-
-    # Override broker if specified via CLI
-    if args.broker:
-        import config
-        config.BROKER = args.broker
 
     # --- Display ---
     if args.display == "account":
@@ -235,13 +225,11 @@ def _run_all(simulate: bool):
     from live.options_trader import OptionsTrader
     from live.futures_trader import FuturesTrader
     from live.broker_factory import get_broker
-    from config import BROKER
     from utils.display import C
     import time
 
     label = f"{C.YELLOW}SIMULATE{C.RESET}" if simulate else f"{C.GREEN}PAPER{C.RESET}"
-    broker_label = f"{C.MAGENTA}{C.BOLD}{BROKER.upper()}{C.RESET}"
-    print(f"\n  {C.BOLD}{C.CYAN}Starting ALL TRADERS{C.RESET} [{label}] broker={broker_label}\n")
+    print(f"\n  {C.BOLD}{C.CYAN}Starting ALL TRADERS{C.RESET} [{label}]\n")
 
     broker = get_broker()
 
@@ -255,11 +243,10 @@ def _run_all(simulate: bool):
     options_thread = threading.Thread(target=options.start, name="options", daemon=True)
     options_thread.start()
 
-    # Futures runs in background (nearly 24h on IB)
-    if BROKER == "ib":
-        futures = FuturesTrader(dry_run=simulate)
-        futures_thread = threading.Thread(target=futures.start, name="futures", daemon=True)
-        futures_thread.start()
+    # Futures runs in background (nearly 24h)
+    futures = FuturesTrader(dry_run=simulate)
+    futures_thread = threading.Thread(target=futures.start, name="futures", daemon=True)
+    futures_thread.start()
 
     # Stocks in main thread
     stocks = DayTrader(dry_run=simulate)

@@ -34,11 +34,19 @@ from config import (
     UNIVERSE_SOURCE, MAX_DRAWDOWN_PCT, MAX_POSITION_PCT, TOP_N,
     SCREEN_MIN_PRICE, SCREEN_MIN_AVG_VOLUME,
 )
-from live.broker import AlpacaBroker
+from live.broker_factory import get_broker
 from live.risk_manager import RiskManager
 from utils.universe import get_universe
 from utils.screener import screen, ScreenCriteria
-from utils.scanner import run_full_scan, print_hot_stocks
+from utils.scanner import run_full_scan
+from utils.trade_log import log_trade
+from utils.display import (
+    C, display_banner, display_account, display_positions,
+    display_scan_header, display_trade, display_signal,
+    display_hot_stocks, display_position_action, display_risk_status,
+    display_daily_summary, display_market_closed, display_no_signals,
+    subheader, pct_color, pnl_color, header,
+)
 
 # --- Logging ---
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "live", "logs")
@@ -49,14 +57,18 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     handlers=[
         logging.FileHandler(os.path.join(LOG_DIR, f"daytrader_{datetime.now():%Y%m%d}.log")),
-        logging.StreamHandler(),
     ],
 )
+# Suppress yfinance/urllib noise from terminal
+logging.getLogger("yfinance").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
 logger = logging.getLogger("day_trader")
 
 
 # --- Configuration ---
-SCAN_INTERVAL_MINUTES = 15    # scan for opportunities every 15 min
+POSITION_CHECK_MINUTES = 5    # check stop loss / take profit every 5 min
+SIGNAL_SCAN_MINUTES = 15      # generate new trade signals every 15 min
+HOT_SCAN_MINUTES = 60         # run hot stock scanner every 60 min
 MAX_POSITIONS = 5             # max concurrent positions
 DAILY_LOSS_LIMIT_PCT = 0.05   # stop trading if down 5% in a day
 STOP_LOSS_PCT = 0.05          # 5% trailing stop per position
@@ -80,7 +92,7 @@ class DayTrader:
 
     def __init__(self, dry_run: bool = False):
         self.dry_run = dry_run
-        self.broker = AlpacaBroker()
+        self.broker = get_broker()
         self.risk_mgr = RiskManager(
             max_drawdown_pct=MAX_DRAWDOWN_PCT,
             max_position_pct=MAX_POSITION_PCT,
@@ -91,89 +103,139 @@ class DayTrader:
         self.hot_tickers = {}  # symbol -> heat_score from scanner
 
     def start(self):
-        """Main loop — runs during market hours."""
-        logger.info("=" * 60)
+        """
+        Main loop — runs during market hours with split intervals:
+          - Every 5 min:  check positions (stop loss / take profit)
+          - Every 15 min: generate new trade signals
+          - Every 60 min: run hot stock scanner
+        """
+        display_banner()
+
+        mode_str = f"{C.YELLOW}{C.BOLD}DRY RUN{C.RESET}" if self.dry_run else f"{C.GREEN}{C.BOLD}LIVE{C.RESET}"
+        print(f"  {C.DIM}Mode:{C.RESET}           {mode_str}")
+        print(f"  {C.DIM}Position check:{C.RESET}  every {C.BOLD}{POSITION_CHECK_MINUTES} min{C.RESET}")
+        print(f"  {C.DIM}Signal scan:{C.RESET}     every {C.BOLD}{SIGNAL_SCAN_MINUTES} min{C.RESET}")
+        print(f"  {C.DIM}Hot stock scan:{C.RESET}  every {C.BOLD}{HOT_SCAN_MINUTES} min{C.RESET}")
+        print(f"  {C.DIM}Max positions:{C.RESET}   {C.BOLD}{MAX_POSITIONS}{C.RESET}")
+        print(f"  {C.DIM}Stop loss:{C.RESET}       {C.RED}{STOP_LOSS_PCT:.0%}{C.RESET}")
+        print(f"  {C.DIM}Take profit:{C.RESET}     {C.GREEN}{TAKE_PROFIT_PCT:.0%}{C.RESET}")
+        print(f"  {C.DIM}Daily limit:{C.RESET}     {C.RED}{DAILY_LOSS_LIMIT_PCT:.0%}{C.RESET}")
+        print()
+
         logger.info("DAY TRADER STARTING")
-        logger.info(f"  Scan interval: {SCAN_INTERVAL_MINUTES} min")
-        logger.info(f"  Max positions: {MAX_POSITIONS}")
-        logger.info(f"  Stop loss: {STOP_LOSS_PCT:.0%} | Take profit: {TAKE_PROFIT_PCT:.0%}")
-        logger.info(f"  Daily loss limit: {DAILY_LOSS_LIMIT_PCT:.0%}")
-        logger.info(f"  Mode: {'DRY RUN' if self.dry_run else 'LIVE'}")
-        logger.info("=" * 60)
 
         # Load universe once at start of day
+        print(subheader("Loading Universe"))
         self._load_universe()
+        print(f"  {C.GREEN}✓{C.RESET} {len(self.universe)} stocks loaded")
 
         # Record start-of-day equity
         account = self.broker.get_account()
         self.day_start_equity = account.equity
         self.risk_mgr.update_equity(account.equity)
-        logger.info(f"Start equity: ${account.equity:,.2f}")
+
+        display_account(
+            account.equity, account.cash, account.buying_power,
+            len(account.positions), peak=self.risk_mgr.peak_equity,
+        )
+        if account.positions:
+            display_positions(account.positions)
+
+        # Track minutes elapsed for each interval
+        minutes_since_signal = SIGNAL_SCAN_MINUTES   # trigger on first loop
+        minutes_since_hot = HOT_SCAN_MINUTES          # trigger on first loop
 
         while True:
             try:
                 if not self.broker.is_market_open():
-                    logger.info("Market is closed. Waiting...")
+                    display_market_closed()
                     time.sleep(60)
                     continue
 
                 self.scan_count += 1
-                logger.info(f"\n--- Scan #{self.scan_count} at {datetime.now():%H:%M:%S} ---")
+                next_signal = SIGNAL_SCAN_MINUTES - minutes_since_signal
+                next_hot = HOT_SCAN_MINUTES - minutes_since_hot
+                display_scan_header(self.scan_count, next_signal, next_hot)
 
-                # Check daily loss limit
+                # === EVERY 5 MIN: Risk checks + position management ===
                 account = self.broker.get_account()
-                daily_pnl = (account.equity - self.day_start_equity) / self.day_start_equity
-                logger.info(f"Day P&L: {daily_pnl:+.2%} (${account.equity - self.day_start_equity:+,.2f})")
+                daily_pnl_val = account.equity - self.day_start_equity
+                daily_pnl_pct = daily_pnl_val / self.day_start_equity if self.day_start_equity else 0
 
-                if daily_pnl < -DAILY_LOSS_LIMIT_PCT:
-                    logger.critical(f"DAILY LOSS LIMIT HIT ({daily_pnl:.1%}). Stopping for today.")
+                display_account(
+                    account.equity, account.cash, account.buying_power,
+                    len(account.positions), daily_pnl=daily_pnl_val,
+                    peak=self.risk_mgr.peak_equity,
+                )
+                logger.info(f"Check #{self.scan_count} | Equity: ${account.equity:,.2f} | Day P&L: {daily_pnl_pct:+.2%}")
+
+                if daily_pnl_pct < -DAILY_LOSS_LIMIT_PCT:
+                    print(f"\n  {C.BG_RED}{C.WHITE}{C.BOLD} DAILY LOSS LIMIT HIT {C.RESET} {C.RED}{daily_pnl_pct:.1%}{C.RESET}")
+                    print(f"  {C.RED}Closing all positions and stopping for today.{C.RESET}")
+                    logger.critical(f"DAILY LOSS LIMIT HIT ({daily_pnl_pct:.1%})")
                     if not self.dry_run:
                         self.broker.close_all_positions()
                     break
 
-                # Check kill switch
                 risk = self.risk_mgr.update_equity(account.equity)
                 if not risk.passed:
+                    display_risk_status(risk.reason, killed=True)
                     logger.critical(f"KILL SWITCH: {risk.reason}")
                     if not self.dry_run:
                         self.broker.close_all_positions()
                     break
 
-                # 1. Check existing positions for exits
+                # Check stop loss / take profit on every tick
+                print(subheader("Positions"))
                 self._manage_positions(account)
 
-                # 2. Run hot stock scanner (every 4th scan to save API calls)
-                if self.scan_count % 4 == 1:
-                    logger.info("Running hot stock scanner...")
-                    hot_stocks = run_full_scan(
-                        self.universe,
-                        include_social=True,
-                        include_insider=True,
-                        include_short_squeeze=False,
-                    )
-                    if hot_stocks:
-                        # Boost hot stocks in our signal scoring
-                        self.hot_tickers = {h.symbol: h.heat_score for h in hot_stocks[:10]}
-                        print_hot_stocks(hot_stocks, top_n=10)
+                # === EVERY 60 MIN: Hot stock scanner ===
+                if minutes_since_hot >= HOT_SCAN_MINUTES:
+                    minutes_since_hot = 0
+                    print(subheader("Hot Stock Scanner"))
+                    try:
+                        hot_stocks = run_full_scan(
+                            self.universe,
+                            include_social=True,
+                            include_insider=True,
+                            include_short_squeeze=False,
+                        )
+                        if hot_stocks:
+                            self.hot_tickers = {h.symbol: h.heat_score for h in hot_stocks[:10]}
+                            display_hot_stocks(hot_stocks, top_n=10)
+                        else:
+                            self.hot_tickers = {}
+                            print(f"  {C.DIM}No hot stocks detected.{C.RESET}")
+                    except Exception as e:
+                        print(f"  {C.YELLOW}Scanner error: {e}{C.RESET}")
+                        logger.warning(f"Hot scan failed: {e}")
+
+                # === EVERY 15 MIN: Signal generation + new entries ===
+                if minutes_since_signal >= SIGNAL_SCAN_MINUTES:
+                    minutes_since_signal = 0
+                    current_positions = len(account.positions)
+                    if current_positions < MAX_POSITIONS:
+                        print(subheader(f"Signal Scan ({MAX_POSITIONS - current_positions} slots open)"))
+                        self._scan_and_enter(account, MAX_POSITIONS - current_positions)
                     else:
-                        self.hot_tickers = {}
+                        print(f"\n  {C.DIM}All {MAX_POSITIONS} slots filled — skipping signal scan.{C.RESET}")
 
-                # 3. Scan for new entries (incorporates hot stocks)
-                current_positions = len(account.positions)
-                if current_positions < MAX_POSITIONS:
-                    self._scan_and_enter(account, MAX_POSITIONS - current_positions)
+                # Next check countdown
+                next_signal = SIGNAL_SCAN_MINUTES - minutes_since_signal
+                next_hot = HOT_SCAN_MINUTES - minutes_since_hot
+                print(f"\n  {C.DIM}Next check in {POSITION_CHECK_MINUTES}m "
+                      f"│ signals in {next_signal}m "
+                      f"│ hot scan in {next_hot}m{C.RESET}")
 
-                logger.info(f"Positions: {len(self.broker.get_positions())}/{MAX_POSITIONS} | "
-                           f"Cash: ${account.cash:,.2f}")
-
-                # Sleep until next scan
-                logger.info(f"Next scan in {SCAN_INTERVAL_MINUTES} minutes...")
-                time.sleep(SCAN_INTERVAL_MINUTES * 60)
+                time.sleep(POSITION_CHECK_MINUTES * 60)
+                minutes_since_signal += POSITION_CHECK_MINUTES
+                minutes_since_hot += POSITION_CHECK_MINUTES
 
             except KeyboardInterrupt:
-                logger.info("Shutting down...")
+                print(f"\n  {C.YELLOW}Shutting down gracefully...{C.RESET}")
                 break
             except Exception as e:
+                print(f"\n  {C.RED}Error: {e}{C.RESET}")
                 logger.error(f"Error in scan loop: {e}", exc_info=True)
                 time.sleep(60)
 
@@ -192,6 +254,7 @@ class DayTrader:
 
     def _scan_and_enter(self, account, open_slots: int):
         """Scan for entry opportunities and open new positions."""
+        print(f"  {C.DIM}Scanning {len(self.universe)} stocks...{C.RESET}")
         signals = self._generate_signals()
 
         # Filter to actionable buy signals
@@ -203,24 +266,30 @@ class DayTrader:
         buys = [s for s in buys if s.symbol not in held]
 
         if not buys:
-            logger.info("No buy signals found.")
+            display_no_signals()
             return
+
+        # Show top signals
+        print(f"\n  {C.BOLD}{len(buys)} buy signals found — top picks:{C.RESET}")
+        for s in buys[:open_slots + 3]:
+            is_hot = s.symbol in self.hot_tickers
+            display_signal(s.symbol, s.score, s.momentum_5d, s.momentum_21d,
+                          s.volume_ratio, s.near_high, is_hot)
+
+        print()
 
         # Take the top opportunities (up to open slots)
         for signal in buys[:open_slots]:
-            position_value = account.equity * MAX_POSITION_PCT
-            position_value = min(position_value, account.cash * 0.95)  # keep some cash buffer
+            available = max(account.buying_power, 0) * 0.90
+            max_per_position = account.equity * MAX_POSITION_PCT
+            position_value = min(max_per_position, available / max(open_slots, 1))
 
             if position_value < 100:
-                logger.info("Insufficient cash for new position.")
+                print(f"  {C.YELLOW}Insufficient buying power (${account.buying_power:,.0f} available).{C.RESET}")
                 break
 
-            logger.info(f"SIGNAL: {signal.symbol} score={signal.score:.2f} "
-                       f"mom5d={signal.momentum_5d:+.1%} mom21d={signal.momentum_21d:+.1%} "
-                       f"vol={signal.volume_ratio:.1f}x {'BREAKOUT' if signal.near_high else ''}")
-
             if self.dry_run:
-                logger.info(f"  DRY RUN: would BUY ${position_value:,.0f} of {signal.symbol}")
+                display_trade("buy", signal.symbol, position_value, signal.score, "DRY RUN")
             else:
                 try:
                     self.broker.submit_market_order(
@@ -228,41 +297,53 @@ class DayTrader:
                         notional=position_value,
                         side="buy",
                     )
-                    logger.info(f"  BOUGHT ${position_value:,.0f} of {signal.symbol}")
+                    display_trade("buy", signal.symbol, position_value, signal.score)
+                    log_trade(signal.symbol, "buy", position_value, asset_type="stock",
+                              score=signal.score, reason="momentum signal")
+                    logger.info(f"BOUGHT ${position_value:,.0f} of {signal.symbol}")
                 except Exception as e:
-                    logger.error(f"  Failed to buy {signal.symbol}: {e}")
+                    print(f"  {C.RED}Failed to buy {signal.symbol}: {e}{C.RESET}")
+                    log_trade(signal.symbol, "buy", position_value, asset_type="stock",
+                              score=signal.score, reason=str(e), status="failed")
+                    logger.error(f"Failed to buy {signal.symbol}: {e}")
 
     def _manage_positions(self, account):
         """Check existing positions for stop loss / take profit exits."""
+        if not account.positions:
+            print(f"  {C.DIM}No open positions{C.RESET}")
+            return
+
         for pos in account.positions:
             pnl_pct = pos.unrealized_pl_pct
 
-            # Stop loss
             if pnl_pct < -STOP_LOSS_PCT:
-                logger.warning(f"STOP LOSS: {pos.symbol} at {pnl_pct:+.1%} "
-                              f"(${pos.unrealized_pl:+,.2f})")
+                display_position_action(pos.symbol, pnl_pct, pos.unrealized_pl, "stop_loss")
+                logger.warning(f"STOP LOSS: {pos.symbol} at {pnl_pct:+.1%}")
                 if not self.dry_run:
                     try:
                         self.broker.close_position(pos.symbol)
+                        log_trade(pos.symbol, "sell", pos.market_value, asset_type="stock",
+                                  pnl=pos.unrealized_pl, pnl_pct=pnl_pct, reason="stop_loss")
                     except Exception as e:
-                        logger.error(f"Failed to close {pos.symbol}: {e}")
+                        print(f"    {C.RED}Failed: {e}{C.RESET}")
                 else:
-                    logger.info(f"  DRY RUN: would close {pos.symbol}")
+                    print(f"    {C.YELLOW}{C.DIM}(dry run — not executed){C.RESET}")
 
-            # Take profit
             elif pnl_pct > TAKE_PROFIT_PCT:
-                logger.info(f"TAKE PROFIT: {pos.symbol} at {pnl_pct:+.1%} "
-                           f"(${pos.unrealized_pl:+,.2f})")
+                display_position_action(pos.symbol, pnl_pct, pos.unrealized_pl, "take_profit")
+                logger.info(f"TAKE PROFIT: {pos.symbol} at {pnl_pct:+.1%}")
                 if not self.dry_run:
                     try:
                         self.broker.close_position(pos.symbol)
+                        log_trade(pos.symbol, "sell", pos.market_value, asset_type="stock",
+                                  pnl=pos.unrealized_pl, pnl_pct=pnl_pct, reason="take_profit")
                     except Exception as e:
-                        logger.error(f"Failed to close {pos.symbol}: {e}")
+                        print(f"    {C.RED}Failed: {e}{C.RESET}")
                 else:
-                    logger.info(f"  DRY RUN: would close {pos.symbol}")
+                    print(f"    {C.YELLOW}{C.DIM}(dry run — not executed){C.RESET}")
 
             else:
-                logger.info(f"  HOLD: {pos.symbol} {pnl_pct:+.1%} (${pos.unrealized_pl:+,.2f})")
+                display_position_action(pos.symbol, pnl_pct, pos.unrealized_pl, "hold")
 
     def _generate_signals(self) -> list[TradeSignal]:
         """Score all stocks in the universe and return ranked signals."""
@@ -360,17 +441,14 @@ class DayTrader:
         """Print end-of-day summary."""
         try:
             account = self.broker.get_account()
-            daily_pnl = account.equity - self.day_start_equity
-            daily_pct = daily_pnl / self.day_start_equity if self.day_start_equity > 0 else 0
-
-            logger.info("\n" + "=" * 60)
-            logger.info("  END OF DAY SUMMARY")
-            logger.info("=" * 60)
-            logger.info(f"  Start equity:  ${self.day_start_equity:>12,.2f}")
-            logger.info(f"  End equity:    ${account.equity:>12,.2f}")
-            logger.info(f"  Day P&L:       ${daily_pnl:>+12,.2f} ({daily_pct:+.2%})")
-            logger.info(f"  Scans today:   {self.scan_count}")
-            logger.info(f"  Positions:     {len(account.positions)}")
-            logger.info("=" * 60)
+            display_daily_summary(
+                self.day_start_equity,
+                account.equity,
+                self.scan_count,
+                len(account.positions),
+            )
+            if account.positions:
+                display_positions(account.positions)
+            logger.info(f"END OF DAY | Equity: ${account.equity:,.2f} | P&L: ${account.equity - self.day_start_equity:+,.2f}")
         except Exception as e:
-            logger.error(f"Failed to generate summary: {e}")
+            print(f"  {C.RED}Failed to generate summary: {e}{C.RESET}")

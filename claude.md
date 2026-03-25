@@ -23,10 +23,10 @@ Build a full quant trading system:
 - **Analysis:** `pandas`, `numpy`
 - **Visualization:** `matplotlib`, `plotly`
 - **Backtesting:** custom-built engine with slippage and commissions
-- **Brokerage API:** Alpaca (paper → live)
+- **Brokerage API:** Interactive Brokers via `ib_async`
 - **Stock Sourcing:** Wikipedia (S&P 500, NASDAQ-100, S&P 400)
 - **Social Signals:** Reddit JSON API, SEC EDGAR RSS
-- **Dependencies:** `lxml`, `pyarrow`, `requests`, `praw`, `feedparser`
+- **Dependencies:** `lxml`, `pyarrow`, `requests`, `praw`, `feedparser`, `ib_async`
 
 ## Repo Structure
 
@@ -34,9 +34,8 @@ Build a full quant trading system:
 quant-trading/
 ├── CLAUDE.md
 ├── README.md
-├── README_KR.md
-├── config.py                  # All settings: universe, strategy params, risk limits
-├── .env                       # API keys (never committed)
+├── config.py                  # All settings: universe, strategy params, risk limits, IB config
+├── .env                       # IB connection settings (never committed)
 ├── requirements.txt
 │
 ├── strategies/                # Strategy definitions
@@ -50,9 +49,15 @@ quant-trading/
 │
 ├── live/                      # Live/paper trading
 │   ├── run.py                 # Main entry point
-│   ├── day_trader.py          # Continuous intraday trading loop
+│   ├── broker_factory.py      # Broker instance factory
+│   ├── ib_broker.py           # IB API wrapper (stocks, crypto)
+│   ├── ib_options_broker.py   # IB options API wrapper
+│   ├── futures_broker.py      # IB futures wrapper (micro contracts)
+│   ├── day_trader.py          # Continuous intraday stock trading
+│   ├── options_trader.py      # Options strategies (4 strategies)
+│   ├── futures_trader.py      # Futures trading (trend + mean reversion)
+│   ├── crypto_trader.py       # 24/7 crypto trading
 │   ├── trader.py              # Single-cycle rebalance trader
-│   ├── broker.py              # Alpaca API wrapper
 │   ├── risk_manager.py        # Kill switch, position limits
 │   ├── scan.py                # Hot stock scanner CLI
 │   ├── paper_trade.py         # Scheduled paper trading
@@ -64,6 +69,8 @@ quant-trading/
 │   ├── screener.py            # Stock screening
 │   ├── data.py                # Price data + caching
 │   ├── backtest_engine.py     # Custom backtesting engine
+│   ├── display.py             # Terminal display helpers
+│   ├── trade_log.py           # Trade logging (CSV)
 │   ├── pipeline.py            # Source → screen → fetch → backtest
 │   ├── benchmarks.py          # Buy-and-hold benchmarks
 │   ├── trend_filter.py        # Market regime detection
@@ -92,7 +99,7 @@ quant-trading/
 
 ## Current Phase
 
-🟢 Phase 2 — Paper trading live via Alpaca with aggressive momentum + hot stock scanner
+🟢 Phase 3 — Paper trading via Interactive Brokers (stocks, options, futures, crypto)
 
 ## Strategies Tracker
 
@@ -108,33 +115,37 @@ quant-trading/
 ## Live Trading Rules
 
 - Max position size: 35% of portfolio
-- Stop loss: 5% per position
-- Take profit: 10% per position
-- Daily loss limit: 5% — stops trading for the day
+- Stop loss: 5% per position (stocks), 2% (futures), 50% (options)
+- Take profit: 10% per position (stocks), 4% (futures), 100% (options)
+- Daily loss limit: 5% (stocks/options), $500 (futures)
 - Kill switch: 20% from peak — liquidates everything
 - Never trade in first 15 min of market open (avoid spread spikes)
 - Scan interval: every 15 minutes during market hours
 - Hot stock scan: hourly (volume anomalies, Reddit buzz, insider filings)
+- Futures: micro contracts only (MES, MNQ, MCL, MGC)
 
 ## Commands
 
 ```bash
 # --- Live Trading ---
-python live/run.py --paper           # Run day trader (continuous)
-python live/run.py --dry-run         # See what it would trade
-python live/run.py --once            # One rebalance cycle
-python live/run.py --once --dry-run  # One cycle, no execution
-python live/run.py --status          # Check account + positions
+python live/run.py                       # Run all traders
+python live/run.py --type stocks         # Stocks only
+python live/run.py --type futures        # Futures only
+python live/run.py --type options        # Options only
+python live/run.py --type crypto         # Crypto only (24/7)
+python live/run.py --simulate            # Dry run (no orders)
+python live/run.py --display account     # Show account & positions
+python live/run.py --display trades      # Show trade history
 
 # --- Hot Stock Scanner ---
-python live/scan.py                  # Quick scan
-python live/scan.py --full           # Full scan (+ Reddit + insider)
-python live/scan.py --full --squeeze # Include short squeeze
+python live/scan.py                      # Quick scan
+python live/scan.py --full               # Full scan (+ Reddit + insider)
+python live/scan.py --full --squeeze     # Include short squeeze
 
 # --- Backtesting ---
 python strategies/momentum.py
 python strategies/aggressive_momentum.py
-python strategies/compare.py         # vs benchmarks
-python strategies/param_sweep.py     # 96 param combos
-python strategies/combined.py        # multi-strategy
+python strategies/compare.py             # vs benchmarks
+python strategies/param_sweep.py         # 96 param combos
+python strategies/combined.py            # multi-strategy
 ```

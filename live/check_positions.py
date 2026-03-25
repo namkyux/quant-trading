@@ -5,11 +5,11 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from live.broker import AlpacaBroker
+from live.broker_factory import get_broker
 
 
 def main():
-    broker = AlpacaBroker()
+    broker = get_broker()
     account = broker.get_account()
 
     print(f"\n{'='*50}")

@@ -29,8 +29,7 @@ from config import (
     MAX_DRAWDOWN_PCT, UNIVERSE_SOURCE,
     SCREEN_MIN_PRICE, SCREEN_MIN_AVG_VOLUME,
 )
-from live.broker import AlpacaBroker
-from live.options_broker import OptionsBroker
+from live.broker_factory import get_broker, get_options_broker
 from live.risk_manager import RiskManager
 from utils.universe import get_universe
 from utils.screener import screen, ScreenCriteria
@@ -87,8 +86,8 @@ class OptionsTrader:
 
     def __init__(self, dry_run: bool = False):
         self.dry_run = dry_run
-        self.broker = AlpacaBroker()
-        self.options = OptionsBroker()
+        self.broker = get_broker()
+        self.options = get_options_broker()
         self.risk_mgr = RiskManager(
             max_drawdown_pct=MAX_DRAWDOWN_PCT,
             max_position_pct=0.10,  # tighter for options

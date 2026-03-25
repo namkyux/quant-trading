@@ -105,6 +105,8 @@ class FuturesBroker:
         self.account = account or self.ib.managedAccounts()[0]
         self._contract_cache: dict[str, FuturesContract] = {}
         self._ib_contract_cache: dict[str, object] = {}
+        # Request delayed data if live market data isn't subscribed
+        self.ib.reqMarketDataType(3)  # 3 = delayed, 1 = live
 
     def _ensure_connected(self):
         if not self.ib.isConnected():

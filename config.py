@@ -63,11 +63,6 @@ MAX_POSITION_PCT = 0.35
 REBALANCE_TIME = "09:45"
 REBALANCE_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
 
-# --- API Keys (Alpaca — legacy) ---
-ALPACA_API_KEY = os.getenv("ALPACA_API_KEY", "")
-ALPACA_SECRET_KEY = os.getenv("ALPACA_SECRET_KEY", "")
-ALPACA_BASE_URL = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
-
 # --- Interactive Brokers ---
 IB_HOST = os.getenv("IB_HOST", "127.0.0.1")
 IB_PAPER_PORT = int(os.getenv("IB_PAPER_PORT", "4002"))
@@ -76,7 +71,7 @@ IB_CLIENT_ID = int(os.getenv("IB_CLIENT_ID", "1"))
 IB_ACCOUNT = os.getenv("IB_ACCOUNT", "")  # auto-detect if blank
 
 # --- Broker Selection ---
-BROKER = os.getenv("BROKER", "alpaca")        # "alpaca" or "ib"
+BROKER = os.getenv("BROKER", "ib")             # "ib"
 BROKER_MODE = os.getenv("BROKER_MODE", "paper")  # "paper" or "live"
 
 # --- Futures ---

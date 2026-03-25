@@ -1,8 +1,7 @@
 """
 IB Options Broker — Interactive Brokers options API wrapper.
 
-Drop-in replacement for OptionsBroker. Same interface (get_chain, get_quote,
-buy_option, sell_option, etc.) so OptionsTrader works unchanged.
+Provides: get_chain, get_quote, buy_option, sell_option, etc.
 """
 
 import sys
@@ -12,11 +11,34 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import logging
 from datetime import datetime, timedelta
+from dataclasses import dataclass
 
 from ib_async import IB, Option, Stock, MarketOrder, LimitOrder
 
 from config import IB_HOST, IB_PAPER_PORT, IB_LIVE_PORT, IB_CLIENT_ID, BROKER_MODE
-from live.options_broker import OptionContract, OptionQuote
+
+
+@dataclass
+class OptionContract:
+    symbol: str           # e.g., AAPL260330C00180000
+    underlying: str       # e.g., AAPL
+    type: str             # "call" or "put"
+    strike: float
+    expiration: str       # e.g., 2026-03-30
+    style: str            # "american"
+    status: str           # "active"
+
+
+@dataclass
+class OptionQuote:
+    symbol: str
+    bid: float
+    ask: float
+    mid: float
+    last: float
+    volume: int
+    open_interest: int
+    implied_vol: float
 
 logger = logging.getLogger("ib_options_broker")
 
@@ -37,6 +59,8 @@ class IBOptionsBroker:
             port = port or (IB_PAPER_PORT if BROKER_MODE == "paper" else IB_LIVE_PORT)
             self.ib.connect(host, port, clientId=client_id + 1)  # +1 to avoid client ID clash
             self._owns_connection = True
+        # Request delayed data if live market data isn't subscribed
+        self.ib.reqMarketDataType(3)  # 3 = delayed, 1 = live
         self._chain_cache: dict[str, dict] = {}
 
     def _get_chain_params(self, symbol: str) -> dict:

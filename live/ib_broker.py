@@ -1,8 +1,7 @@
 """
 IB Broker — Interactive Brokers API wrapper via ib_async.
 
-Drop-in replacement for AlpacaBroker. Same interface (get_account, get_positions,
-submit_market_order, close_position, etc.) so all existing traders work unchanged.
+Provides: get_account, get_positions, submit_market_order, close_position, etc.
 
 Connects to TWS or IB Gateway on localhost.
   - Paper: port 4002 (Gateway) or 7497 (TWS)
@@ -21,13 +20,31 @@ from dataclasses import dataclass
 from ib_async import IB, Stock, Crypto, MarketOrder, util
 
 from config import IB_HOST, IB_PAPER_PORT, IB_LIVE_PORT, IB_CLIENT_ID, IB_ACCOUNT, BROKER_MODE
-from live.broker import Position, AccountInfo
+
+
+@dataclass
+class Position:
+    symbol: str
+    qty: float
+    market_value: float
+    avg_entry_price: float
+    current_price: float
+    unrealized_pl: float
+    unrealized_pl_pct: float
+
+
+@dataclass
+class AccountInfo:
+    equity: float
+    cash: float
+    buying_power: float
+    positions: list[Position]
 
 logger = logging.getLogger("ib_broker")
 
 
 class IBBroker:
-    """Interactive Brokers client — matches AlpacaBroker interface."""
+    """Interactive Brokers trading client."""
 
     def __init__(
         self,
@@ -50,6 +67,8 @@ class IBBroker:
         self.ib.connect(self.host, self.port, clientId=self.client_id)
         acct = self.account or self.ib.managedAccounts()[0]
         self.account = acct
+        # Request delayed data if live market data isn't subscribed
+        self.ib.reqMarketDataType(3)  # 3 = delayed, 1 = live
         logger.info(f"Connected to IB — account: {acct}")
 
     def _ensure_connected(self):

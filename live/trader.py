@@ -2,7 +2,7 @@
 Automated Trader — The main loop that runs the trading system.
 
 This is the brain. It:
-1. Connects to Alpaca
+1. Connects to broker
 2. Pulls latest market data
 3. Generates target portfolio (using momentum strategy)
 4. Compares target vs current holdings
@@ -29,7 +29,7 @@ from config import (
     SCREEN_MIN_PRICE, SCREEN_MIN_AVG_VOLUME,
     MAX_DRAWDOWN_PCT, MAX_POSITION_PCT,
 )
-from live.broker import AlpacaBroker
+from live.broker_factory import get_broker
 from live.risk_manager import RiskManager
 from utils.universe import get_universe
 from utils.screener import screen, ScreenCriteria
@@ -59,7 +59,7 @@ class AutoTrader:
             dry_run: if True, calculate trades but don't execute them
         """
         self.dry_run = dry_run
-        self.broker = AlpacaBroker()
+        self.broker = get_broker()
         self.risk_mgr = RiskManager(
             max_drawdown_pct=MAX_DRAWDOWN_PCT,
             max_position_pct=MAX_POSITION_PCT,
