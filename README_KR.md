@@ -1,6 +1,6 @@
 # 퀀트 트레이딩 시스템
 
-S&P 500 전체 종목을 자동으로 스캔하고, 핫 종목을 감지하며, Alpaca API를 통해 자동 매매하는 퀀트 트레이딩 시스템입니다.
+S&P 500 전체 종목을 자동으로 스캔하고, 핫 종목을 감지하며, Interactive Brokers(IB)를 통해 자동 매매하는 퀀트 트레이딩 시스템입니다.
 
 ## 핵심 기능
 
@@ -59,7 +59,7 @@ S&P 500 전체 종목을 자동으로 스캔하고, 핫 종목을 감지하며, 
 │   ├── 거래량 확인
 │   └── 핫 종목 가산점
 │
-└── 자동 주문 실행 (Alpaca API)
+└── 자동 주문 실행 (Interactive Brokers)
 ```
 
 ## 백테스트 성과 (2019-2025)
@@ -81,8 +81,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# .env 파일에 Alpaca API 키 설정
-# https://alpaca.markets 에서 무료 계정 생성
+# IB Gateway 또는 TWS 실행 (모의투자 계좌, API 활성화)
+# .env 에 IB_HOST / IB_PAPER_PORT / IB_LIVE_PORT / IB_CLIENT_ID / BROKER_MODE 설정
 
 # 데이 트레이더 실행 (모의투자)
 python live/run.py --paper
@@ -102,6 +102,6 @@ python live/scan.py --full
 - **Python 3.11+**
 - **데이터:** yfinance, pandas, numpy
 - **시각화:** matplotlib, plotly
-- **증권사 API:** Alpaca (모의투자 → 실전)
+- **증권사 API:** Interactive Brokers, ib_async (모의투자 → 실전)
 - **종목 소싱:** Wikipedia (S&P 500/NASDAQ-100/S&P 400 구성종목)
 - **소셜 분석:** Reddit JSON API, SEC EDGAR RSS

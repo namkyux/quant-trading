@@ -1,12 +1,12 @@
 # Quant Trading System
 
-Automated quantitative trading system for stocks and crypto. Scans 500+ stocks and 33 crypto coins, detects hot assets using momentum, volume anomalies, Reddit buzz, and insider buying, then executes trades via Alpaca API with full risk management. Crypto trades 24/7.
+Automated quantitative trading system for stocks and crypto. Scans 500+ stocks and 33 crypto coins, detects hot assets using momentum, volume anomalies, Reddit buzz, and insider buying, then executes trades through Interactive Brokers (IB Gateway/TWS) with full risk management. Crypto trades 24/7.
 
 ## What It Does
 
 1. **Scans 500+ stocks and 33 crypto coins** for momentum, volume spikes, Reddit buzz, and insider buying
 2. **Scores and ranks** candidates using multi-timeframe momentum + breakout detection + volume confirmation
-3. **Executes trades** automatically on paper accounts via Alpaca (stocks + crypto)
+3. **Executes trades** automatically on an Interactive Brokers paper account (stocks + crypto; options and futures have their own traders)
 4. **Manages risk** with stop losses, take profits, daily loss limits, and a portfolio kill switch
 5. **Runs 24/7** for crypto, market hours for stocks
 
@@ -18,8 +18,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# 2. Add your Alpaca API keys to .env
-#    Get free keys at https://alpaca.markets
+# 2. Start IB Gateway or TWS (paper account, API enabled) and copy the IB_* settings from Setup into .env
 
 # 3. Run the full system (stocks + crypto on paper)
 python live/run.py
@@ -93,7 +92,10 @@ quant-trading/
 │   ├── day_trader.py          # Stock day trader (market hours)
 │   ├── crypto_trader.py       # Crypto trader (24/7)
 │   ├── trader.py              # Single-cycle rebalance trader
-│   ├── broker.py              # Alpaca API wrapper (stocks + crypto)
+│   ├── broker_factory.py      # Picks the broker (BROKER=ib)
+│   ├── ib_broker.py           # Interactive Brokers wrapper (stocks + crypto, via ib_async)
+│   ├── ib_options_broker.py   # IB options wrapper
+│   ├── futures_broker.py      # IB futures wrapper (micro contracts)
 │   ├── risk_manager.py        # Kill switch, position limits, trade validation
 │   ├── scan.py                # Hot stock scanner CLI
 │   └── logs/                  # Trade logs (JSON per cycle)
@@ -214,9 +216,9 @@ MAX_DRAWDOWN_PCT = 0.20             # kill switch at 20% from peak
 ## Stack
 
 - **Python 3.11+**
-- **Data:** yfinance, pandas, numpy, Alpaca Crypto API
+- **Data:** yfinance, pandas, numpy
 - **Visualization:** matplotlib, plotly
-- **Brokerage:** Alpaca API (paper and live, stocks + crypto)
+- **Brokerage:** Interactive Brokers via `ib_async` (paper and live; stocks, crypto, options, futures)
 - **Stock Sourcing:** Wikipedia (S&P 500/NASDAQ-100/S&P 400 constituents)
 - **Social Signals:** Reddit JSON API, SEC EDGAR RSS
 - **Terminal UI:** ANSI colors, formatted tables, heat bars
@@ -226,11 +228,14 @@ MAX_DRAWDOWN_PCT = 0.20             # kill switch at 20% from peak
 1. Clone the repo
 2. Create virtual environment: `python3 -m venv .venv && source .venv/bin/activate`
 3. Install dependencies: `pip install -r requirements.txt`
-4. Create a free Alpaca account at https://alpaca.markets
-5. Copy your API keys to `.env`:
+4. Open an Interactive Brokers account, then start IB Gateway or TWS with the API enabled (start on paper)
+5. Put the connection settings in `.env` (all optional; defaults shown):
    ```
-   ALPACA_API_KEY=your_key
-   ALPACA_SECRET_KEY=your_secret
-   ALPACA_BASE_URL=https://paper-api.alpaca.markets
+   IB_HOST=127.0.0.1
+   IB_PAPER_PORT=4002
+   IB_LIVE_PORT=4001
+   IB_CLIENT_ID=1
+   IB_ACCOUNT=          # blank = auto-detect
+   BROKER_MODE=paper    # paper or live
    ```
 6. Run: `python live/run.py`

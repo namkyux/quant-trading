@@ -2,7 +2,7 @@
 
 ## Current State
 
-Working automated trading system with stocks (S&P 500) and crypto (33 coins) via Alpaca. Custom backtesting engine, hot stock scanner (volume + Reddit + SEC insider), aggressive momentum strategy, and pretty terminal UI.
+Working automated trading system with stocks (S&P 500) and crypto (33 coins) via Interactive Brokers, plus options and futures traders. Custom backtesting engine, hot stock scanner (volume + Reddit + SEC insider), aggressive momentum strategy, and pretty terminal UI.
 
 ## Short Term
 
@@ -14,7 +14,7 @@ Working automated trading system with stocks (S&P 500) and crypto (33 coins) via
 ## Medium Term
 
 - [ ] Integrate Freqtrade for crypto trading — battle-tested across 50+ exchanges, Hyperopt strategy optimization, FreqUI web dashboard, Telegram bot control
-- [ ] Replace yfinance with a paid data provider (Polygon, Databento, or Alpaca's data API) for reliability
+- [ ] Replace yfinance with a paid data provider (Polygon, Databento, or IB's market data API) for reliability
 - [ ] Add limit orders and smarter execution (TWAP, iceberg) to reduce slippage
 - [ ] Build a web dashboard (replace terminal-only UI) so positions can be monitored from phone
 - [ ] Add walk-forward optimization to avoid overfitting strategies to historical data
