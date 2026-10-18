@@ -1,13 +1,14 @@
 # Quant Trading System
 
-Automated quantitative trading system that scans the entire S&P 500, detects hot stocks using multiple signals, and executes trades via the Alpaca API. Built for aggressive, systematic trading with full risk management.
+Automated quantitative trading system for stocks and crypto. Scans 500+ stocks and 33 crypto coins, detects hot assets using momentum, volume anomalies, Reddit buzz, and insider buying, then executes trades via Alpaca API with full risk management. Crypto trades 24/7.
 
 ## What It Does
 
-1. **Scans 500+ stocks** every 15 minutes for momentum, volume anomalies, Reddit buzz, and insider buying
+1. **Scans 500+ stocks and 33 crypto coins** for momentum, volume spikes, Reddit buzz, and insider buying
 2. **Scores and ranks** candidates using multi-timeframe momentum + breakout detection + volume confirmation
-3. **Executes trades** automatically on paper or live accounts via Alpaca
-4. **Manages risk** with stop losses, daily loss limits, and a portfolio kill switch
+3. **Executes trades** automatically on paper accounts via Alpaca (stocks + crypto)
+4. **Manages risk** with stop losses, take profits, daily loss limits, and a portfolio kill switch
+5. **Runs 24/7** for crypto, market hours for stocks
 
 ## Quick Start
 
@@ -20,31 +21,47 @@ pip install -r requirements.txt
 # 2. Add your Alpaca API keys to .env
 #    Get free keys at https://alpaca.markets
 
-# 3. Run the day trader (paper money)
-python live/run.py --paper
+# 3. Run the full system (stocks + crypto on paper)
+python live/run.py
 
-# 4. Or just see what it would trade
-python live/run.py --dry-run
+# 4. Or simulate first (no orders placed)
+python live/run.py --simulate
 ```
 
 ## Commands
 
-### Live Trading
-```bash
-python live/run.py --paper       # Run day trader on paper account (continuous)
-python live/run.py --dry-run     # See what trades it would make (no execution)
-python live/run.py --once        # Run one rebalance cycle and exit
-python live/run.py --status      # Check account and positions
+```
+python live/run.py [--type TYPE] [--account ACCOUNT] [--display DISPLAY] [--scan SCAN] [--simulate]
 ```
 
-### Hot Stock Scanner
-```bash
-python live/scan.py              # Quick scan (volume + momentum)
-python live/scan.py --full       # Full scan (+ Reddit + insider filings)
-python live/scan.py --full --squeeze  # Include short squeeze candidates
-```
+### Trading
+
+| Command | What it does |
+|---|---|
+| `python live/run.py` | Run everything — stocks + crypto on paper |
+| `python live/run.py --type stocks` | Stocks only (market hours) |
+| `python live/run.py --type crypto` | Crypto only (24/7) |
+| `python live/run.py --type all` | Stocks + crypto (default) |
+| `python live/run.py --simulate` | Simulate all trades, no orders placed |
+| `python live/run.py --type stocks --simulate` | Simulate stocks only |
+
+### Account
+
+| Command | What it does |
+|---|---|
+| `python live/run.py --display account` | Show equity, cash, positions, P&L |
+| `python live/run.py --account paper` | Use paper account (default) |
+
+### Scanner
+
+| Command | What it does |
+|---|---|
+| `python live/run.py --scan` | Scan everything (stocks + crypto) |
+| `python live/run.py --scan stocks` | Hot stock scanner (volume + Reddit + insider) |
+| `python live/run.py --scan crypto` | Crypto scanner (prices + signals + Reddit buzz) |
 
 ### Backtesting
+
 ```bash
 python strategies/momentum.py              # Vanilla momentum backtest
 python strategies/aggressive_momentum.py   # Aggressive momentum backtest
@@ -72,18 +89,18 @@ quant-trading/
 │   └── param_sweep.py         # Parameter optimization (96 combinations)
 │
 ├── live/                      # Live/paper trading
-│   ├── run.py                 # Main entry point
-│   ├── day_trader.py          # Continuous intraday trading loop
+│   ├── run.py                 # Main entry point (all commands)
+│   ├── day_trader.py          # Stock day trader (market hours)
+│   ├── crypto_trader.py       # Crypto trader (24/7)
 │   ├── trader.py              # Single-cycle rebalance trader
-│   ├── broker.py              # Alpaca API wrapper
+│   ├── broker.py              # Alpaca API wrapper (stocks + crypto)
 │   ├── risk_manager.py        # Kill switch, position limits, trade validation
 │   ├── scan.py                # Hot stock scanner CLI
-│   ├── paper_trade.py         # Scheduled paper trading
-│   ├── check_positions.py     # Quick position check
 │   └── logs/                  # Trade logs (JSON per cycle)
 │
 ├── utils/                     # Shared infrastructure
 │   ├── scanner.py             # Hot stock detection (volume, Reddit, insider, squeeze)
+│   ├── display.py             # Pretty terminal output (colors, charts, tables)
 │   ├── universe.py            # Dynamic stock sourcing (S&P 500, NASDAQ-100, S&P 400)
 │   ├── screener.py            # Stock screening (price, volume, sector filters)
 │   ├── data.py                # Price data fetching + caching (yfinance)
@@ -99,40 +116,52 @@ quant-trading/
 └── notebooks/                 # Exploratory analysis
 ```
 
-## How the Day Trader Works
+## How It Works
+
+### Stock Day Trader (market hours)
 
 ```
-Every 15 minutes during market hours:
-│
-├── Risk Checks
-│   ├── Daily P&L check (stops at -5%)
-│   └── Kill switch (liquidates at -20% from peak)
-│
-├── Position Management
-│   ├── Stop loss: exit at -5%
-│   └── Take profit: exit at +10%
-│
-├── Hot Stock Scanner (hourly)
-│   ├── Volume anomalies (2x+ normal volume)
-│   ├── Price acceleration (momentum shift)
-│   ├── Reddit buzz (r/wallstreetbets, r/stocks, r/investing)
-│   └── SEC insider buying filings
-│
-├── Signal Generation
-│   ├── Multi-timeframe momentum (5d, 10d, 21d)
-│   ├── Breakout detection (near 20-day highs)
-│   ├── Volume confirmation
-│   ├── Volatility penalty (avoid pump-and-dumps)
-│   └── Hot stock score boost
-│
-└── Execution
-    ├── Up to 5 concurrent positions
-    ├── 35% max per position
-    └── Market orders via Alpaca
+Every 5 min:   Check positions (stop loss / take profit)
+               Risk checks (daily limit, kill switch)
+
+Every 15 min:  Signal scan (momentum scoring for 500+ stocks)
+               Open new positions if slots available
+
+Every 60 min:  Hot stock scanner
+               ├── Volume anomalies (2x+ normal volume)
+               ├── Price acceleration (momentum shift)
+               ├── Reddit buzz (r/wallstreetbets, r/stocks)
+               └── SEC insider buying filings
 ```
+
+### Crypto Trader (24/7)
+
+```
+Every 3 min:   Check positions (stop loss / take profit)
+               Risk checks (daily limit, kill switch)
+
+Every 10 min:  Signal scan (33 coins — momentum + volume)
+               Open new positions if slots available
+
+Every 30 min:  Reddit crypto scan
+               ├── r/cryptocurrency, r/CryptoMarkets
+               ├── r/bitcoin, r/ethereum, r/solana
+               └── Social buzz scoring per coin
+```
+
+## Crypto Universe (33 coins)
+
+| Category | Coins |
+|---|---|
+| Large cap | BTC, ETH, SOL, XRP, LTC, ADA, AVAX, DOT, LINK, BCH |
+| DeFi | UNI, AAVE, CRV, GRT, LDO, SUSHI, FIL, RENDER, ONDO |
+| Meme | DOGE, SHIB, PEPE, BONK, WIF, TRUMP |
+| Layer 1/Infra | ARB, POL, XTZ, BAT |
+| Other | YFI, SKY, PAXG, HYPE |
 
 ## Risk Management
 
+### Stocks
 | Guard | Trigger | Action |
 |---|---|---|
 | Stop loss | Position down 5% | Close position |
@@ -141,13 +170,22 @@ Every 15 minutes during market hours:
 | Kill switch | Account down 20% from peak | Liquidate all positions |
 | Position cap | Single stock > 35% | Block or scale down |
 
+### Crypto (wider limits for volatility)
+| Guard | Trigger | Action |
+|---|---|---|
+| Stop loss | Position down 8% | Close position |
+| Take profit | Position up 15% | Close position |
+| Daily loss limit | Account down 8% today | Stop trading for the day |
+| Kill switch | Account down 20% from peak | Liquidate all positions |
+| Position cap | Single coin > 25% | Block or scale down |
+
 ## Strategy Performance (Backtest 2019-2025)
 
 | Strategy | CAGR | Sharpe | Max DD |
 |---|---|---|---|
+| Aggressive momentum | 74.9% | 1.44 | -47.3% |
 | Momentum (vanilla) | 46.9% | 1.20 | -40.0% |
 | Momentum + trend filter | 30.1% | 0.95 | -32.1% |
-| Aggressive momentum | 74.9% | 1.44 | -47.3% |
 | S&P 500 (benchmark) | 17.3% | 0.91 | -33.7% |
 
 Note: Backtest results are subject to survivorship bias and may not reflect future performance.
@@ -157,24 +195,31 @@ Note: Backtest results are subject to survivorship bias and may not reflect futu
 All settings are in `config.py`:
 
 ```python
-UNIVERSE_SOURCE = "sp500"       # "sp500", "nasdaq100", "sp400"
-MOMENTUM_LOOKBACK = 21          # short-term momentum (trading days)
-TOP_N = 3                       # concentrated: top 3 stocks
-REBALANCE_FREQ = 1              # daily
-MAX_DRAWDOWN_PCT = 0.20         # kill switch at 20%
-MAX_POSITION_PCT = 0.35         # max 35% in one stock
-SCREEN_MIN_PRICE = 10.0         # exclude cheap stocks
-SCREEN_MIN_AVG_VOLUME = 1000000 # high liquidity only
+# Stocks
+UNIVERSE_SOURCE = "sp500"           # "sp500", "nasdaq100", "sp400"
+MOMENTUM_LOOKBACK = 21              # short-term momentum (trading days)
+TOP_N = 3                           # concentrated: top 3 stocks
+MAX_POSITION_PCT = 0.35             # max 35% in one stock
+
+# Crypto
+CRYPTO_SYMBOLS = ["BTC/USD", ...]   # 33 coins
+CRYPTO_STOP_LOSS_PCT = 0.08         # 8% stop loss
+CRYPTO_TAKE_PROFIT_PCT = 0.15       # 15% take profit
+CRYPTO_MAX_POSITION_PCT = 0.25      # 25% max per coin
+
+# Risk
+MAX_DRAWDOWN_PCT = 0.20             # kill switch at 20% from peak
 ```
 
 ## Stack
 
 - **Python 3.11+**
-- **Data:** yfinance, pandas, numpy
+- **Data:** yfinance, pandas, numpy, Alpaca Crypto API
 - **Visualization:** matplotlib, plotly
-- **Brokerage:** Alpaca API (paper and live)
+- **Brokerage:** Alpaca API (paper and live, stocks + crypto)
 - **Stock Sourcing:** Wikipedia (S&P 500/NASDAQ-100/S&P 400 constituents)
 - **Social Signals:** Reddit JSON API, SEC EDGAR RSS
+- **Terminal UI:** ANSI colors, formatted tables, heat bars
 
 ## Setup
 
@@ -188,4 +233,4 @@ SCREEN_MIN_AVG_VOLUME = 1000000 # high liquidity only
    ALPACA_SECRET_KEY=your_secret
    ALPACA_BASE_URL=https://paper-api.alpaca.markets
    ```
-6. Run: `python live/run.py --paper`
+6. Run: `python live/run.py`
